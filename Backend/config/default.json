@@ -1,5 +1,5 @@
 {
     "mongo_url":"mongodb+srv://roudaina:04062002Rr+@cluster0.lqatepg.mongodb.net/socialmedia",
-    "jwtSecret":"jwtSecret",
+    "jwtSecret":"yourSecretKey",
     "tokenExpire":"2592000"
 }

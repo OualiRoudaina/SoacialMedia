@@ -1,6 +1,8 @@
 const express = require('express');
 const Post = require('../models/post.js');
 const { upload, compressImage, compressVideo } = require('../middlewares/uploadMiddleware.js');
+const authMiddleware = require('../middlewares/authMiddleware');
+const User = require('../models/user');
 
 const router = express.Router();
 
@@ -10,13 +12,13 @@ const router = express.Router();
  * @access  Privé
  */
 //tested
-router.post('/', upload.single('media'), compressImage, compressVideo, async (req, res) => {
+router.post('/',authMiddleware, upload.single('media'), compressImage, compressVideo, async (req, res) => {
   try {
     const { content, tags } = req.body;
     const mediaUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
     const newPost = new Post({
-      userId: "60d21b4667d0d8992e610c85", // Exemple de userId
+      userId: req.user.id, // Exemple de userId
       content,
       image: req.file && req.file.mimetype.startsWith('image/') ? mediaUrl : null,
       video: req.file && req.file.mimetype.startsWith('video/') ? mediaUrl : null,
@@ -35,9 +37,9 @@ router.post('/', upload.single('media'), compressImage, compressVideo, async (re
  * @desc    Obtenir tous les posts
  * @access  Public
  */
-router.get('/', async (req, res) => {
+router.get('/',authMiddleware, async (req, res) => {
   try {
-    const posts = await Post.find().populate('userId', 'username avatar').sort({ createdAt: -1 });
+    const posts = await Post.find({ userId: req.user.id }).populate('userId', 'username avatar').sort({ createdAt: -1 });
     res.status(200).json(posts);
   } catch (error) {
     res.status(500).json({ error: 'Erreur lors de la récupération des posts' });
@@ -49,9 +51,9 @@ router.get('/', async (req, res) => {
  * @desc    Obtenir un post par ID
  * @access  Public
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id',authMiddleware, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id).populate('userId', 'username avatar');
+    const post = await Post.findById({userId: req.params.id}).populate('userId', 'username avatar');
     if (!post) return res.status(404).json({ error: 'Post non trouvé' });
 
     res.status(200).json(post);
@@ -65,15 +67,15 @@ router.get('/:id', async (req, res) => {
  * @desc    Supprimer un post
  * @access  Privé (propriétaire uniquement)
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id',authMiddleware, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post non trouvé' });
 
     // Vérifiez si l'utilisateur est le propriétaire du post (à implémenter plus tard)
-    // if (post.userId.toString() !== req.user.id) {
-    //   return res.status(403).json({ error: 'Action non autorisée' });
-    // }
+     if (post.userId.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Action non autorisée' });
+     }
 
     await post.deleteOne();
     res.status(200).json({ message: 'Post supprimé avec succès' });
@@ -88,15 +90,15 @@ router.delete('/:id', async (req, res) => {
  * @access  Privé (propriétaire uniquement)
  */
 //tested
-router.put('/:id', async (req, res) => {
+router.put('/:id',authMiddleware, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post non trouvé' });
 
     // Vérifiez si l'utilisateur est le propriétaire du post (à implémenter plus tard)
-    // if (post.userId.toString() !== req.user.id) {
-    //   return res.status(403).json({ error: 'Action non autorisée' });
-    // }
+     if (post.userId.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Action non autorisée' });
+     }
 
     const { content, tags } = req.body;
     post.content = content || post.content;
@@ -172,9 +174,9 @@ router.delete('/:id/comment/:commentId', async (req, res) => {
     if (!comment) return res.status(404).json({ error: 'Commentaire non trouvé' });
 
     // Vérifiez si l'utilisateur est le propriétaire du commentaire ou du post (à implémenter plus tard)
-    // if (comment.userId.toString() !== req.user.id && post.userId.toString() !== req.user.id) {
-    //   return res.status(403).json({ error: 'Action non autorisée' });
-    // }
+     if (comment.userId.toString() !== req.user.id && post.userId.toString() !== req.user.id) {
+       return res.status(403).json({ error: 'Action non autorisée' });
+     }
 
     post.comments = post.comments.filter(c => c._id.toString() !== req.params.commentId);
     await post.save();
@@ -220,6 +222,65 @@ router.post('/:id/share', async (req, res) => {
     res.status(201).json(sharedPost);
   } catch (error) {
     res.status(500).json({ error: 'Erreur lors du partage du post' });
+  }
+});
+
+/**
+ * @route   POST /api/posts/save/:postId
+ * @desc    Enregistrer un post 
+ * @access  Privé
+ */
+router.post('/save/:postId', authMiddleware, async (req, res) => {
+  console.log("Utilisateur authentifié :", req.user); // Debug
+
+  try {
+    const { postId } = req.params;  
+    const userId = req.user.id;  
+
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ error: 'Post non trouvé' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    if (user.savedPosts.includes(postId)) {
+      return res.status(400).json({ error: 'Post déjà enregistré' });
+    }
+
+    user.savedPosts.push(postId);
+    await user.save();
+
+    res.status(200).json({ message: 'Post enregistré avec succès', savedPosts: user.savedPosts });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erreur lors de l\'enregistrement du post' });
+  }
+});
+
+
+
+/**
+ * @route   GET /api/posts/saved
+ * @desc    afficher les posts enregistrés 
+ * @access  Privé
+ */
+router.get('/saved', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await User.findById(userId).populate('savedPosts');
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    res.status(200).json(user.savedPosts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des posts enregistrés' });
   }
 });
 
